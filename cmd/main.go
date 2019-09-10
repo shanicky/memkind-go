@@ -12,7 +12,6 @@ printf("%d ", s[i]);
 }
 
 printf("\n");
-
 }
 */
 import "C"
@@ -20,40 +19,80 @@ import "C"
 import (
     "fmt"
     "github.com/shanicky/memkind-go/memkind"
+    "log"
+    "math/rand"
     "os"
     "reflect"
+    "sync/atomic"
+    "time"
     "unsafe"
 )
 
+var (
+    alloc    = int64(0)
+    parallel = 64
+)
 
 func main() {
     path := "/tmp"
 
     if len(os.Args) > 2 {
-        fmt.Printf("Usage: %s [pmem_kind_dir_path]", os.Args[0])
-        os.Exit(1)
+	fmt.Printf("Usage: %s [pmem_kind_dir_path]", os.Args[0])
+	os.Exit(1)
     }
 
     if len(os.Args) == 2 {
-        path = os.Args[1]
+	path = os.Args[1]
     }
 
     fmt.Printf("PMEM kind directory: %s\n", path);
-
     var kind memkind.MemkindT = nil
     if errno := memkind.MemkindCreatePmem(path, 1024*1024*1024*32, &kind); errno != 0 {
-        memkindPrintError(errno)
-        os.Exit(1)
+	memkindPrintError(errno)
+	os.Exit(1)
     }
 
-    size := uint(10)
-    ptr := memkind.MemkindMalloc(kind, size)
-    defer memkind.MemkindFree(kind, ptr)
+    defer memkind.MemkindDestroyKind(kind)
 
-    bs := unsafePtrToBytes(ptr, size)
-    copy(bs[:10], []byte("12345678"))
+    buff := make([]byte, 1024*1024*100)
 
-    printPtr(ptr)
+    for i := 0; i < len(buff); i++ {
+	buff[i] = 'x'
+    }
+
+    go func() {
+	ticker := time.NewTicker(time.Second)
+
+	last := alloc
+	for range ticker.C {
+	    current := atomic.LoadInt64(&alloc)
+	    fmt.Printf("%.2fMB/s\n", float64(current-last)/float64(1024*1024))
+	    last = current
+	}
+    }()
+
+    for i := 0; i < parallel; i++ {
+	go func() {
+	    for {
+		size := uint(rand.Int() % (1024 * 1024 * 10))
+		ptr := memkind.MemkindMalloc(kind, size)
+		if ptr == nil {
+		    log.Fatal("ptr is nil")
+		}
+
+		bs := unsafePtrToBytes(ptr, size)
+		copy(bs, buff[:size])
+		memkind.MemkindFree(kind, ptr)
+
+
+		atomic.AddInt64(&alloc, int64(size))
+	    }
+
+	}()
+    }
+    select {}
+
+    // printPtr(ptr)
 }
 
 func printPtr(ptr unsafe.Pointer) {
@@ -63,7 +102,7 @@ func printPtr(ptr unsafe.Pointer) {
 
 func unsafePtrToBytes(ptr unsafe.Pointer, size uint) []byte {
     return *(*[]byte)(unsafe.Pointer(&reflect.SliceHeader{
-        Data: uintptr(ptr), Len: int(size), Cap: int(size),
+	Data: uintptr(ptr), Len: int(size), Cap: int(size),
     }))
 }
 
