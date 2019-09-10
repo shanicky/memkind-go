@@ -26,6 +26,8 @@ TRANSLATOR:
       - {load: snakecase}
       - {load: doc.google}
   PtrTips:
+    types:
+      - {target: memkind_t, tips: [ref]}
     function:
       - {target: memkind_create_pmem, tips: [ref, 0, ref]}
       - {target: memkind_create_pmem_config, tips: [ref, ref]}
